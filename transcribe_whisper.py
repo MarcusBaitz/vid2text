@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 import argparse
 import locale
+import os
 import re
+import shutil
 import subprocess
+import time
 from pathlib import Path
 
+import torch
 import whisper
 
 
@@ -36,7 +40,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-OUTPUT_TEMPLATE = "%(id)s.%(ext)s"
+DOWNLOAD_DIR = Path("downloads")
+OUTPUT_TEMPLATE = str(DOWNLOAD_DIR / "%(id)s.%(ext)s")
 PREFERRED_ENCODING = locale.getpreferredencoding(False)
 
 
@@ -53,6 +58,7 @@ def normalize_ytdlp_path(raw_path: str) -> Path:
 
 
 def get_existing_audio_path(url: str) -> Path | None:
+    DOWNLOAD_DIR.mkdir(exist_ok=True)
     yt_dlp_path = Path(__file__).with_name("yt-dlp.exe")
     if not yt_dlp_path.exists():
         raise SystemExit(f"yt-dlp.exe not found next to script: {yt_dlp_path}")
@@ -91,6 +97,7 @@ def get_existing_audio_path(url: str) -> Path | None:
 
 
 def download_audio(url: str) -> tuple[Path, bool]:
+    DOWNLOAD_DIR.mkdir(exist_ok=True)
     existing_path = get_existing_audio_path(url)
     if existing_path:
         print(f"Using existing audio: {existing_path}")
@@ -158,12 +165,70 @@ def ensure_safe_name(path: Path) -> Path:
     return target
 
 
+def get_audio_duration_seconds(audio_path: Path, ffprobe_path: str | None) -> float | None:
+    if not ffprobe_path:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                ffprobe_path,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(audio_path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding=PREFERRED_ENCODING,
+            errors="surrogateescape",
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    duration_str = result.stdout.strip()
+    if not duration_str:
+        return None
+    try:
+        return float(duration_str)
+    except ValueError:
+        return None
+
+
 def main() -> None:
     args = parse_args()
     if args.audio and args.url:
         raise SystemExit("Provide either an audio file path or a URL, not both.")
     if not args.audio and not args.url:
         raise SystemExit("Provide an audio file path or a URL.")
+
+    ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        if local_appdata:
+            winget_base = Path(local_appdata) / "Microsoft" / "WinGet" / "Packages"
+            if winget_base.exists():
+                candidates = sorted(
+                    winget_base.glob(
+                        "Gyan.FFmpeg_*\\ffmpeg-*-full_build\\bin\\ffmpeg.exe"
+                    )
+                )
+                if candidates:
+                    ffmpeg_path = str(candidates[-1])
+                    os.environ["PATH"] = f"{Path(ffmpeg_path).parent};{os.environ.get('PATH', '')}"
+    if not ffmpeg_path:
+        raise SystemExit(
+            "ffmpeg not found. Install it (e.g. winget install -e --id Gyan.FFmpeg) "
+            "and ensure it is on PATH."
+        )
+    print(f"ffmpeg: {ffmpeg_path}")
+    ffprobe_path = shutil.which("ffprobe")
+    if not ffprobe_path:
+        ffprobe_candidate = Path(ffmpeg_path).with_name("ffprobe.exe")
+        if ffprobe_candidate.exists():
+            ffprobe_path = str(ffprobe_candidate)
 
     if args.url:
         print("Input: URL")
@@ -181,15 +246,35 @@ def main() -> None:
     out_path = resolve_out_path(audio_path, args.out)
     print(f"Output: {out_path}")
 
+    # Check GPU availability (GPU is required)
+    if not torch.cuda.is_available():
+        raise SystemExit("CUDA-capable GPU required, but none was detected.")
+    device = "cuda"
+    print(f"Using device: {device}")
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+
     print(f"Loading Whisper model: {args.model}")
-    model = whisper.load_model(args.model)
+    model = whisper.load_model(args.model, device=device)
     print("Transcribing...")
+    started_at = time.perf_counter()
     result = model.transcribe(str(audio_path))
+    elapsed = time.perf_counter() - started_at
     text = result.get("text", "").strip()
 
     print("Writing transcript...")
     out_path.write_text(text + "\n", encoding="utf-8")
-    print(text)
+
+    word_count = len(text.split())
+    audio_duration = get_audio_duration_seconds(audio_path, ffprobe_path)
+    print(f"Elapsed: {elapsed:.2f}s")
+    if audio_duration:
+        rtf = elapsed / audio_duration if audio_duration > 0 else 0.0
+        print(f"Audio duration: {audio_duration:.2f}s")
+        print(f"Real-time factor: {rtf:.2f}x")
+    else:
+        print("Audio duration: unknown")
+        print("Real-time factor: n/a")
+    print(f"Word count: {word_count}")
 
     if args.url and downloaded:
         print("Cleaning up downloaded audio...")
