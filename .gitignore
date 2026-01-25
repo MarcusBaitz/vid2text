@@ -1,2 +1,6 @@
 .venv/
 .lh/
+.env
+downloads/
+transcripts/
+*.webm
