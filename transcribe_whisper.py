@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 import argparse
+import csv
+import hashlib
+import json
 import locale
 import os
 import re
 import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
@@ -32,10 +38,68 @@ def parse_args() -> argparse.Namespace:
         help="Whisper model size (tiny, base, small, medium, large). Default: base.",
     )
     parser.add_argument(
+        "--device",
+        choices=["auto", "cuda", "cpu"],
+        default=os.environ.get("VID2TEXT_DEVICE", "auto"),
+        help="Execution device for Whisper (auto, cuda, cpu). Default: auto.",
+    )
+    parser.add_argument(
         "-o",
         "--out",
         default=None,
         help="Output text file path. Default: <audio>.txt next to input.",
+    )
+    parser.add_argument(
+        "--summarize",
+        action="store_true",
+        help="Generate a concrete summary with an LLM after transcription.",
+    )
+    parser.add_argument(
+        "--summary-out",
+        default=None,
+        help="Output file path for summary. Default: <transcript>.summary.txt",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        help="LLM model name for summary (default from env VID2TEXT_LLM_MODEL or gpt-4o-mini).",
+    )
+    parser.add_argument(
+        "--summary-prompt",
+        default=(
+            "Analysiere den Inhalt und erstelle eine kurze, knappe Lernzusammenfassung auf Deutsch. "
+            "Ziel: Ich soll den Inhalt schnell verstehen und daraus lernen koennen. "
+            "Strukturiere in: Kurz-Zusammenfassung, wichtigste Learnings, praktische Strategie, Merksatz. "
+            "Fokussiere auf die zentralen Ideen, Zusammenhaenge und umsetzbaren Punkte. "
+            "Lasse Werbung, Smalltalk, Wiederholungen und irrelevante Details weg. "
+            "Sei praezise, knapp und nenne nur Inhalte, die aus dem Transkript ableitbar sind."
+        ),
+        help="Custom instruction prompt for the summary.",
+    )
+    parser.add_argument(
+        "--cookies-from-browser",
+        default=os.environ.get("VID2TEXT_COOKIES_FROM_BROWSER"),
+        help="Pass browser cookies to yt-dlp (e.g. chrome, edge, firefox).",
+    )
+    parser.add_argument(
+        "--cookies",
+        default=os.environ.get("VID2TEXT_COOKIES_FILE"),
+        help="Path to a Netscape cookies.txt file for yt-dlp.",
+    )
+    parser.add_argument(
+        "--cookies-browser-fallbacks",
+        default=os.environ.get("VID2TEXT_COOKIES_BROWSER_FALLBACKS", "edge,firefox"),
+        help="Fallback browsers when --cookies-from-browser fails (default: edge,firefox).",
+    )
+    parser.add_argument(
+        "--yt-clients",
+        default=os.environ.get("VID2TEXT_YT_CLIENTS", "android,tv"),
+        help="Comma-separated YouTube player clients for fallback (default: android,tv).",
+    )
+    parser.add_argument(
+        "--yt-js-runtimes",
+        default=os.environ.get("VID2TEXT_YT_JS_RUNTIMES"),
+        help="yt-dlp JavaScript runtimes (e.g. node or deno).",
     )
     return parser.parse_args()
 
@@ -57,15 +121,96 @@ def normalize_ytdlp_path(raw_path: str) -> Path:
     return Path(trimmed)
 
 
-def get_existing_audio_path(url: str) -> Path | None:
+def ytdlp_cookie_option_sets(cli_args: argparse.Namespace) -> list[tuple[str, list[str]]]:
+    if cli_args.cookies:
+        return [("cookies-file", ["--cookies", cli_args.cookies])]
+
+    if not cli_args.cookies_from_browser:
+        return [("no-cookies", [])]
+
+    requested = cli_args.cookies_from_browser.strip()
+    fallbacks = [
+        browser.strip()
+        for browser in cli_args.cookies_browser_fallbacks.split(",")
+        if browser.strip()
+    ]
+    sources: list[str] = [requested]
+    for browser in fallbacks:
+        if browser.casefold() != requested.casefold() and browser not in sources:
+            sources.append(browser)
+    return [(f"cookies:{source}", ["--cookies-from-browser", source]) for source in sources]
+
+
+def ytdlp_common_options(cli_args: argparse.Namespace) -> list[str]:
+    options = ["--no-update"]
+    if cli_args.yt_js_runtimes:
+        options.extend(["--js-runtimes", cli_args.yt_js_runtimes])
+    return options
+
+
+def ytdlp_profiles(cli_args: argparse.Namespace) -> list[tuple[str, list[str]]]:
+    profiles: list[tuple[str, list[str]]] = [("default", [])]
+    clients = [part.strip() for part in cli_args.yt_clients.split(",") if part.strip()]
+    for client in clients:
+        profiles.append(
+            (
+                f"player_client={client}",
+                ["--extractor-args", f"youtube:player_client={client}"],
+            )
+        )
+    return profiles
+
+
+def run_ytdlp_with_fallback(
+    *,
+    yt_dlp_path: Path,
+    cli_args: argparse.Namespace,
+    action_args: list[str],
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    common = ytdlp_common_options(cli_args)
+    last_error = ""
+    for cookie_name, cookie_args in ytdlp_cookie_option_sets(cli_args):
+        for profile_name, profile_args in ytdlp_profiles(cli_args):
+            cmd = [str(yt_dlp_path), *common, *cookie_args, *profile_args, *action_args]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding=PREFERRED_ENCODING,
+                errors="surrogateescape",
+            )
+            if result.returncode == 0:
+                return result, f"{cookie_name}|{profile_name}"
+            stderr_text = (result.stderr or "").strip()
+            if stderr_text:
+                last_error = stderr_text
+
+    if "Could not copy Chrome cookie database" in last_error:
+        raise SystemExit(
+            last_error
+            + "\nHint: close Chrome completely and retry, or use --cookies-from-browser edge,"
+            + " or pass --cookies <cookies.txt>."
+        )
+    if "Sign in to confirm you’re not a bot" in last_error or "Sign in to confirm you're not a bot" in last_error:
+        raise SystemExit(
+            last_error
+            + "\nHint: retry with --cookies-from-browser chrome (or edge/firefox)."
+        )
+    raise SystemExit(
+        last_error
+        or "yt-dlp failed for all fallback profiles."
+        + " Try --cookies-from-browser chrome (or edge/firefox)."
+    )
+
+
+def get_existing_audio_path(url: str, cli_args: argparse.Namespace) -> Path | None:
     DOWNLOAD_DIR.mkdir(exist_ok=True)
     yt_dlp_path = Path(__file__).with_name("yt-dlp.exe")
     if not yt_dlp_path.exists():
         raise SystemExit(f"yt-dlp.exe not found next to script: {yt_dlp_path}")
 
     print("Checking for existing download...")
-    cmd = [
-        str(yt_dlp_path),
+    action_args = [
         "-x",
         "--audio-format",
         "mp3",
@@ -76,15 +221,13 @@ def get_existing_audio_path(url: str) -> Path | None:
         "--skip-download",
         url,
     ]
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding=PREFERRED_ENCODING,
-        errors="surrogateescape",
+    result, profile_name = run_ytdlp_with_fallback(
+        yt_dlp_path=yt_dlp_path,
+        cli_args=cli_args,
+        action_args=action_args,
     )
-    if result.returncode != 0:
-        raise SystemExit(result.stderr.strip() or "yt-dlp failed.")
+    if profile_name != "default":
+        print(f"yt-dlp fallback profile used: {profile_name}")
 
     output_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     if not output_lines:
@@ -96,9 +239,95 @@ def get_existing_audio_path(url: str) -> Path | None:
     return None
 
 
-def download_audio(url: str) -> tuple[Path, bool]:
+def get_video_metadata(url: str, cli_args: argparse.Namespace) -> tuple[str, str]:
+    yt_dlp_path = Path(__file__).with_name("yt-dlp.exe")
+    if not yt_dlp_path.exists():
+        raise SystemExit(f"yt-dlp.exe not found next to script: {yt_dlp_path}")
+
+    action_args = [
+        "--print",
+        "%(id)s\t%(title)s",
+        "--skip-download",
+        url,
+    ]
+    result, profile_name = run_ytdlp_with_fallback(
+        yt_dlp_path=yt_dlp_path,
+        cli_args=cli_args,
+        action_args=action_args,
+    )
+    if profile_name != "default":
+        print(f"yt-dlp fallback profile used: {profile_name}")
+
+    output_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not output_lines:
+        raise SystemExit("Could not read video metadata from yt-dlp.")
+
+    video_id, _, title = output_lines[-1].partition("\t")
+    if not video_id or not title:
+        raise SystemExit("Could not parse video metadata (id/title).")
+    return video_id.strip(), title.strip()
+
+
+def title_hash(title: str) -> str:
+    normalized = title.strip().casefold()
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+def append_video_index(
+    *,
+    url: str,
+    video_id: str,
+    title: str,
+    title_digest: str,
+    transcript_path: Path,
+) -> None:
+    out_dir = Path("transcripts")
+    out_dir.mkdir(exist_ok=True)
+    index_path = out_dir / "video_index.csv"
+    file_exists = index_path.exists()
+
+    with index_path.open("a", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(
+                [
+                    "timestamp_utc",
+                    "hash",
+                    "video_id",
+                    "title",
+                    "url",
+                    "transcript",
+                ]
+            )
+        writer.writerow(
+            [
+                datetime.now(timezone.utc).isoformat(),
+                title_digest,
+                video_id,
+                title,
+                url,
+                str(transcript_path),
+            ]
+        )
+
+
+def load_dotenv_file(env_path: Path = Path(".env")) -> None:
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def download_audio(url: str, cli_args: argparse.Namespace) -> tuple[Path, bool]:
     DOWNLOAD_DIR.mkdir(exist_ok=True)
-    existing_path = get_existing_audio_path(url)
+    existing_path = get_existing_audio_path(url, cli_args)
     if existing_path:
         print(f"Using existing audio: {existing_path}")
         return existing_path, False
@@ -108,8 +337,7 @@ def download_audio(url: str) -> tuple[Path, bool]:
         raise SystemExit(f"yt-dlp.exe not found next to script: {yt_dlp_path}")
 
     print("Downloading audio...")
-    cmd = [
-        str(yt_dlp_path),
+    action_args = [
         "-x",
         "--audio-format",
         "mp3",
@@ -119,15 +347,13 @@ def download_audio(url: str) -> tuple[Path, bool]:
         "after_move:filepath",
         url,
     ]
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding=PREFERRED_ENCODING,
-        errors="surrogateescape",
+    result, profile_name = run_ytdlp_with_fallback(
+        yt_dlp_path=yt_dlp_path,
+        cli_args=cli_args,
+        action_args=action_args,
     )
-    if result.returncode != 0:
-        raise SystemExit(result.stderr.strip() or "yt-dlp failed.")
+    if profile_name != "default":
+        print(f"yt-dlp fallback profile used: {profile_name}")
 
     output_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     if not output_lines:
@@ -145,6 +371,89 @@ def resolve_out_path(audio_path: Path, out_arg: str | None) -> Path:
     out_dir = Path("transcripts")
     out_dir.mkdir(exist_ok=True)
     return out_dir / f"{audio_path.stem}.txt"
+
+
+def resolve_url_out_path(
+    out_arg: str | None,
+    video_id: str,
+    title_digest: str,
+) -> Path:
+    if out_arg:
+        return Path(out_arg)
+    out_dir = Path("transcripts")
+    out_dir.mkdir(exist_ok=True)
+    return out_dir / f"{video_id}_{title_digest}.txt"
+
+
+def resolve_summary_out_path(transcript_path: Path, summary_out_arg: str | None) -> Path:
+    if summary_out_arg:
+        return Path(summary_out_arg)
+    return transcript_path.with_name(f"{transcript_path.stem}.summary.txt")
+
+
+def call_openai_chat_completion(
+    *,
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    base_url: str,
+) -> str:
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.2,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    endpoint = base_url.rstrip("/") + "/v1/chat/completions"
+    request = urllib.request.Request(
+        endpoint,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"LLM request failed ({exc.code}): {body}") from exc
+    except urllib.error.URLError as exc:
+        raise SystemExit(f"LLM request failed: {exc}") from exc
+
+    parsed = json.loads(raw)
+    try:
+        content = parsed["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise SystemExit("LLM response format unexpected.") from exc
+    if not content or not str(content).strip():
+        raise SystemExit("LLM returned an empty summary.")
+    return str(content).strip()
+
+
+def summarize_with_llm(transcript_text: str, model: str, summary_prompt: str) -> str:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise SystemExit("OPENAI_API_KEY is missing. Add it to .env or environment.")
+    base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com")
+    max_chars = int(os.environ.get("VID2TEXT_SUMMARY_MAX_CHARS", "30000"))
+    text_for_model = transcript_text[:max_chars]
+    if len(transcript_text) > max_chars:
+        text_for_model += "\n\n[Hinweis: Transkript wurde für die Zusammenfassung gekürzt.]"
+
+    return call_openai_chat_completion(
+        api_key=api_key,
+        model=model,
+        system_prompt="Du bist ein präziser Assistent für Zusammenfassungen.",
+        user_prompt=f"{summary_prompt}\n\nTranskript:\n{text_for_model}",
+        base_url=base_url,
+    )
 
 
 def safe_stem(name: str) -> str:
@@ -198,6 +507,7 @@ def get_audio_duration_seconds(audio_path: Path, ffprobe_path: str | None) -> fl
 
 
 def main() -> None:
+    load_dotenv_file()
     args = parse_args()
     if args.audio and args.url:
         raise SystemExit("Provide either an audio file path or a URL, not both.")
@@ -232,26 +542,40 @@ def main() -> None:
 
     if args.url:
         print("Input: URL")
-        audio_path, downloaded = download_audio(args.url)
+        video_id, video_title = get_video_metadata(args.url, args)
+        video_title_hash = title_hash(video_title)
+        print(f"Video ID: {video_id}")
+        print(f"Title: {video_title}")
+        print(f"Title hash: {video_title_hash}")
+        audio_path, downloaded = download_audio(args.url, args)
         if downloaded:
             print("Renaming downloaded audio to a safe name...")
             audio_path = ensure_safe_name(audio_path)
+        out_path = resolve_url_out_path(args.out, video_id, video_title_hash)
     else:
         print("Input: local file")
         audio_path = Path(args.audio)
         if not audio_path.exists():
             raise SystemExit(f"Audio file not found: {audio_path}")
         downloaded = False
+        out_path = resolve_out_path(audio_path, args.out)
 
-    out_path = resolve_out_path(audio_path, args.out)
     print(f"Output: {out_path}")
 
-    # Check GPU availability (GPU is required)
-    if not torch.cuda.is_available():
-        raise SystemExit("CUDA-capable GPU required, but none was detected.")
-    device = "cuda"
+    if args.device == "cuda":
+        if not torch.cuda.is_available():
+            raise SystemExit("CUDA requested but none detected. Use --device cpu or --device auto.")
+        device = "cuda"
+    elif args.device == "cpu":
+        device = "cpu"
+    else:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
     print(f"Using device: {device}")
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    if device == "cuda":
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+    else:
+        print("CPU mode active (slower than CUDA).")
 
     print(f"Loading Whisper model: {args.model}")
     model = whisper.load_model(args.model, device=device)
@@ -263,6 +587,26 @@ def main() -> None:
 
     print("Writing transcript...")
     out_path.write_text(text + "\n", encoding="utf-8")
+
+    if args.summarize:
+        if not text:
+            raise SystemExit("Transcript is empty; cannot generate summary.")
+        llm_model = args.llm_model or os.environ.get("VID2TEXT_LLM_MODEL", "gpt-4o-mini")
+        print(f"Generating summary with model: {llm_model}")
+        summary_text = summarize_with_llm(text, llm_model, args.summary_prompt)
+        summary_out_path = resolve_summary_out_path(out_path, args.summary_out)
+        summary_out_path.write_text(summary_text + "\n", encoding="utf-8")
+        print(f"Summary written: {summary_out_path}")
+
+    if args.url:
+        append_video_index(
+            url=args.url,
+            video_id=video_id,
+            title=video_title,
+            title_digest=video_title_hash,
+            transcript_path=out_path,
+        )
+        print("Video mapping saved: transcripts/video_index.csv")
 
     word_count = len(text.split())
     audio_duration = get_audio_duration_seconds(audio_path, ffprobe_path)

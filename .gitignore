@@ -4,3 +4,5 @@
 downloads/
 transcripts/
 *.webm
+__pycache__/
+*.pyc
