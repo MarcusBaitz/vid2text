@@ -48,7 +48,10 @@ def parse_args() -> argparse.Namespace:
         "--device",
         choices=["auto", "cuda", "cpu"],
         default=os.environ.get("VID2TEXT_DEVICE", "auto"),
-        help="Execution device for Whisper (auto, cuda, cpu). Default: auto.",
+        help=(
+            "Execution device for Whisper (auto, cuda, cpu). Default: auto. "
+            "Auto uses CUDA when available and falls back to CPU."
+        ),
     )
     parser.add_argument(
         "-o",
@@ -626,7 +629,7 @@ def main() -> None:
     if device == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
     else:
-        print("CPU mode active (slower than CUDA).")
+        print("CPU fallback active (works, but is much slower than CUDA and not recommended for long files).")
 
     print(f"Loading Whisper model: {args.model}")
     model = whisper.load_model(args.model, device=device)

@@ -20,9 +20,13 @@ print(f"\n✓ Python: {sys.version}")
 try:
     import torch
     print(f"✓ Torch: {torch.__version__}")
-    print(f"  CUDA verfügbar: {torch.cuda.is_available()}")
-    if torch.cuda.is_available():
+    cuda_available = torch.cuda.is_available()
+    print(f"  CUDA verfügbar: {cuda_available}")
+    if cuda_available:
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
+        print("  Empfehlung: CUDA/GPU wird automatisch genutzt.")
+    else:
+        print("  Hinweis: CPU-Fallback ist moeglich, aber deutlich langsamer und nicht empfohlen fuer lange Dateien.")
 except ImportError as e:
     print(f"✗ Torch: {e}")
 

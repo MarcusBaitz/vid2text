@@ -25,6 +25,8 @@ Das erledigt automatisch:
 - legt `downloads/` und `transcripts/` an
 - startet Download, Transkription und optional Zusammenfassung
 
+GPU/CUDA ist nicht zwingend erforderlich. Empfohlen ist eine NVIDIA-GPU mit CUDA, weil Whisper damit deutlich schneller ist. Ohne CUDA faellt `--device auto` automatisch auf CPU zurueck; das funktioniert, ist fuer lange Dateien aber langsam und nicht empfohlen.
+
 Nach dem ersten Lauf reicht meistens:
 
 ```powershell
@@ -155,6 +157,9 @@ Hinweise:
 
 - `-Model`: `tiny`, `base`, `small`, `medium`, `large`
 - `-Device`: `auto`, `cuda`, `cpu`
+- `auto` ist der Standard: nutzt CUDA, wenn verfuegbar, sonst CPU-Fallback.
+- `cuda` erzwingt GPU-Nutzung und bricht ab, wenn keine CUDA-GPU erkannt wird.
+- `cpu` funktioniert ohne GPU, ist aber deutlich langsamer und fuer lange Dateien nicht empfohlen.
 - Linux nutzt dieselben Optionen in Kleinschreibung, z. B. `--model` und `--device`.
 - Alles nach `--` wird direkt an `transcribe_whisper.py` weitergereicht.
 - Bei YouTube Bot-Checks hilft oft `-CookiesFromBrowser chrome` oder `edge`.
