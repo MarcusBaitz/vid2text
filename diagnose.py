@@ -4,6 +4,11 @@ import sys
 from pathlib import Path
 import shutil
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 print("=" * 60)
 print("DIAGNOSE: Abhängigkeiten prüfen")
 print("=" * 60)
@@ -48,19 +53,21 @@ else:
 
 # yt-dlp
 print("\n--- yt-dlp ---")
-ytdlp_exe = Path("yt-dlp.exe")
-if ytdlp_exe.exists():
-    print(f"✓ yt-dlp.exe: {ytdlp_exe.absolute()}")
-    result = subprocess.run([str(ytdlp_exe), "--version"], capture_output=True, text=True)
+local_ytdlp = next(
+    (candidate for candidate in (Path("yt-dlp.exe"), Path("yt-dlp")) if candidate.exists()),
+    None,
+)
+path_ytdlp = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
+if local_ytdlp:
+    print(f"✓ yt-dlp: {local_ytdlp.absolute()}")
+    result = subprocess.run([str(local_ytdlp), "--version"], capture_output=True, text=True)
+    print(f"  Version: {result.stdout.strip()}")
+elif path_ytdlp:
+    print(f"✓ yt-dlp: {path_ytdlp}")
+    result = subprocess.run([path_ytdlp, "--version"], capture_output=True, text=True)
     print(f"  Version: {result.stdout.strip()}")
 else:
-    print(f"✗ yt-dlp.exe: NICHT GEFUNDEN in {Path.cwd()}")
-    print("  Versuche mit pip-Installation:")
-    try:
-        result = subprocess.run(["yt-dlp", "--version"], capture_output=True, text=True)
-        print(f"  ✓ yt-dlp (pip): {result.stdout.strip()}")
-    except:
-        print("  ✗ yt-dlp (pip): NICHT GEFUNDEN")
+    print(f"✗ yt-dlp: NICHT GEFUNDEN in {Path.cwd()} oder PATH")
 
 # PATH prüfen
 print("\n--- System PATH ---")
@@ -80,7 +87,7 @@ if not ffmpeg_path:
     print("\n   ODER:")
     print("   choco install ffmpeg -y  (mit Admin-Rechten)")
 
-if not ytdlp_exe.exists():
+if not local_ytdlp and not path_ytdlp:
     print("\n2. yt-dlp herunterladen:")
     print("   https://github.com/yt-dlp/yt-dlp/releases")
     print("   Oder: pip install yt-dlp (und PATH aktualisieren)")

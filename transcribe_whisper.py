@@ -2,12 +2,14 @@
 import argparse
 import csv
 import hashlib
+import io
 import json
 import locale
 import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -16,6 +18,11 @@ from pathlib import Path
 
 import torch
 import whisper
+
+if isinstance(sys.stdout, io.TextIOBase) and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if isinstance(sys.stderr, io.TextIOBase) and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 def parse_args() -> argparse.Namespace:
@@ -67,12 +74,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--summary-prompt",
         default=(
-            "Analysiere den Inhalt und erstelle eine kurze, knappe Lernzusammenfassung auf Deutsch. "
-            "Ziel: Ich soll den Inhalt schnell verstehen und daraus lernen koennen. "
-            "Strukturiere in: Kurz-Zusammenfassung, wichtigste Learnings, praktische Strategie, Merksatz. "
-            "Fokussiere auf die zentralen Ideen, Zusammenhaenge und umsetzbaren Punkte. "
-            "Lasse Werbung, Smalltalk, Wiederholungen und irrelevante Details weg. "
-            "Sei praezise, knapp und nenne nur Inhalte, die aus dem Transkript ableitbar sind."
+            "Erstelle eine inhaltstreue deutsche Zusammenfassung, die den wichtigen Content "
+            "und die eigentliche Botschaft des Transkripts erhaelt. Ziel: Ich soll verstehen, "
+            "was der Sprecher vermitteln wollte, welche Argumente, Beispiele, Warnungen, "
+            "Strategien und Schlussfolgerungen wichtig sind, und was ich praktisch daraus "
+            "mitnehmen kann. Verdichte Wiederholungen, Smalltalk, Werbung und irrelevante "
+            "Nebenbemerkungen, aber streiche keine fachlich relevanten Details, Bedingungen, "
+            "Einschraenkungen, Zahlen, Namen, Begriffe, Prozessschritte oder Ursache-Wirkung-"
+            "Zusammenhaenge. Wenn etwas nur angedeutet wird, kennzeichne es als Ableitung "
+            "statt als Fakt. Erfinde nichts und nutze nur Inhalte, die aus dem Transkript "
+            "ableitbar sind. Struktur: 1. Kurzueberblick, 2. Zentrale Botschaft, "
+            "3. Wichtigste Inhalte und Argumente, 4. Konkrete Learnings/Handlungspunkte, "
+            "5. Wichtige Details, Beispiele oder Einschraenkungen, 6. Merksatz."
         ),
         help="Custom instruction prompt for the summary.",
     )
@@ -107,6 +120,23 @@ def parse_args() -> argparse.Namespace:
 DOWNLOAD_DIR = Path("downloads")
 OUTPUT_TEMPLATE = str(DOWNLOAD_DIR / "%(id)s.%(ext)s")
 PREFERRED_ENCODING = locale.getpreferredencoding(False)
+
+
+def resolve_ytdlp_path() -> Path:
+    script_dir = Path(__file__).resolve().parent
+    local_names = ("yt-dlp.exe", "yt-dlp")
+    for name in local_names:
+        candidate = script_dir / name
+        if candidate.exists():
+            return candidate
+
+    path_match = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
+    if path_match:
+        return Path(path_match)
+
+    raise SystemExit(
+        "yt-dlp not found. Run .\\run.ps1 on Windows or ./run.sh on Linux to set it up."
+    )
 
 
 def normalize_ytdlp_path(raw_path: str) -> Path:
@@ -205,9 +235,7 @@ def run_ytdlp_with_fallback(
 
 def get_existing_audio_path(url: str, cli_args: argparse.Namespace) -> Path | None:
     DOWNLOAD_DIR.mkdir(exist_ok=True)
-    yt_dlp_path = Path(__file__).with_name("yt-dlp.exe")
-    if not yt_dlp_path.exists():
-        raise SystemExit(f"yt-dlp.exe not found next to script: {yt_dlp_path}")
+    yt_dlp_path = resolve_ytdlp_path()
 
     print("Checking for existing download...")
     action_args = [
@@ -240,9 +268,7 @@ def get_existing_audio_path(url: str, cli_args: argparse.Namespace) -> Path | No
 
 
 def get_video_metadata(url: str, cli_args: argparse.Namespace) -> tuple[str, str]:
-    yt_dlp_path = Path(__file__).with_name("yt-dlp.exe")
-    if not yt_dlp_path.exists():
-        raise SystemExit(f"yt-dlp.exe not found next to script: {yt_dlp_path}")
+    yt_dlp_path = resolve_ytdlp_path()
 
     action_args = [
         "--print",
@@ -332,9 +358,7 @@ def download_audio(url: str, cli_args: argparse.Namespace) -> tuple[Path, bool]:
         print(f"Using existing audio: {existing_path}")
         return existing_path, False
 
-    yt_dlp_path = Path(__file__).with_name("yt-dlp.exe")
-    if not yt_dlp_path.exists():
-        raise SystemExit(f"yt-dlp.exe not found next to script: {yt_dlp_path}")
+    yt_dlp_path = resolve_ytdlp_path()
 
     print("Downloading audio...")
     action_args = [
@@ -377,12 +401,14 @@ def resolve_url_out_path(
     out_arg: str | None,
     video_id: str,
     title_digest: str,
+    title: str,
 ) -> Path:
     if out_arg:
         return Path(out_arg)
     out_dir = Path("transcripts")
     out_dir.mkdir(exist_ok=True)
-    return out_dir / f"{video_id}_{title_digest}.txt"
+    title_stem = safe_stem(title)[:80].rstrip("._-") or "video"
+    return out_dir / f"{title_stem}_{video_id}_{title_digest}.txt"
 
 
 def resolve_summary_out_path(transcript_path: Path, summary_out_arg: str | None) -> Path:
@@ -437,7 +463,12 @@ def call_openai_chat_completion(
     return str(content).strip()
 
 
-def summarize_with_llm(transcript_text: str, model: str, summary_prompt: str) -> str:
+def summarize_with_llm(
+    transcript_text: str,
+    model: str,
+    summary_prompt: str,
+    original_title: str | None = None,
+) -> str:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise SystemExit("OPENAI_API_KEY is missing. Add it to .env or environment.")
@@ -447,11 +478,29 @@ def summarize_with_llm(transcript_text: str, model: str, summary_prompt: str) ->
     if len(transcript_text) > max_chars:
         text_for_model += "\n\n[Hinweis: Transkript wurde für die Zusammenfassung gekürzt.]"
 
+    title_instruction = ""
+    title_context = ""
+    if original_title:
+        title_instruction = (
+            "Beginne die Antwort mit einer Markdown-Ueberschrift, die den Originaltitel "
+            "enthaelt und optional um eine kurze konkrete Einordnung ergaenzt. "
+            "Verwende keinen rein generischen Titel wie 'Zusammenfassung'.\n\n"
+        )
+        title_context = f"Originaltitel: {original_title}\n\n"
+
     return call_openai_chat_completion(
         api_key=api_key,
         model=model,
-        system_prompt="Du bist ein präziser Assistent für Zusammenfassungen.",
-        user_prompt=f"{summary_prompt}\n\nTranskript:\n{text_for_model}",
+        system_prompt=(
+            "Du bist ein praeziser Analyse-Assistent fuer Transkript-Zusammenfassungen. "
+            "Deine Prioritaet ist Inhaltstreue: Bewahre die beabsichtigte Botschaft, "
+            "wichtige Argumente, Nuancen und umsetzbare Erkenntnisse. Verdichte, aber "
+            "verflache den Inhalt nicht. Erfinde keine Informationen."
+        ),
+        user_prompt=(
+            f"{title_instruction}{summary_prompt}\n\n"
+            f"{title_context}Transkript:\n{text_for_model}"
+        ),
         base_url=base_url,
     )
 
@@ -543,6 +592,7 @@ def main() -> None:
     if args.url:
         print("Input: URL")
         video_id, video_title = get_video_metadata(args.url, args)
+        summary_title = video_title
         video_title_hash = title_hash(video_title)
         print(f"Video ID: {video_id}")
         print(f"Title: {video_title}")
@@ -551,12 +601,13 @@ def main() -> None:
         if downloaded:
             print("Renaming downloaded audio to a safe name...")
             audio_path = ensure_safe_name(audio_path)
-        out_path = resolve_url_out_path(args.out, video_id, video_title_hash)
+        out_path = resolve_url_out_path(args.out, video_id, video_title_hash, video_title)
     else:
         print("Input: local file")
         audio_path = Path(args.audio)
         if not audio_path.exists():
             raise SystemExit(f"Audio file not found: {audio_path}")
+        summary_title = audio_path.stem
         downloaded = False
         out_path = resolve_out_path(audio_path, args.out)
 
@@ -593,7 +644,12 @@ def main() -> None:
             raise SystemExit("Transcript is empty; cannot generate summary.")
         llm_model = args.llm_model or os.environ.get("VID2TEXT_LLM_MODEL", "gpt-4o-mini")
         print(f"Generating summary with model: {llm_model}")
-        summary_text = summarize_with_llm(text, llm_model, args.summary_prompt)
+        summary_text = summarize_with_llm(
+            text,
+            llm_model,
+            args.summary_prompt,
+            original_title=summary_title,
+        )
         summary_out_path = resolve_summary_out_path(out_path, args.summary_out)
         summary_out_path.write_text(summary_text + "\n", encoding="utf-8")
         print(f"Summary written: {summary_out_path}")

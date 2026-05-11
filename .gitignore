@@ -3,6 +3,8 @@
 .env
 downloads/
 transcripts/
+tools/
+yt-dlp
 *.webm
 __pycache__/
 *.pyc
