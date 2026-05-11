@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--summary-out",
         default=None,
-        help="Output file path for summary. Default: <transcript>.summary.txt",
+        help="Output file path for summary. Default: <transcript>.summary.md",
     )
     parser.add_argument(
         "--llm-model",
@@ -417,7 +417,7 @@ def resolve_url_out_path(
 def resolve_summary_out_path(transcript_path: Path, summary_out_arg: str | None) -> Path:
     if summary_out_arg:
         return Path(summary_out_arg)
-    return transcript_path.with_name(f"{transcript_path.stem}.summary.txt")
+    return transcript_path.with_name(f"{transcript_path.stem}.summary.md")
 
 
 def call_openai_chat_completion(

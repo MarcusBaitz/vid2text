@@ -138,7 +138,7 @@ Windows:
 ```powershell
 .\run.ps1 "https://..." -Model small -Device auto
 .\run.ps1 "https://..." -Out .\transcripts\mein_text.txt
-.\run.ps1 "https://..." -Summarize -SummaryOut .\transcripts\mein_summary.txt
+.\run.ps1 "https://..." -Summarize -SummaryOut .\transcripts\mein_summary.md
 .\run.ps1 "https://..." -CookiesFromBrowser chrome
 .\run.ps1 "https://..." -- --yt-clients "android,tv,web"
 ```
@@ -148,7 +148,7 @@ Linux:
 ```bash
 bash ./run.sh "https://..." --model small --device auto
 bash ./run.sh "https://..." --out ./transcripts/mein_text.txt
-bash ./run.sh "https://..." --summarize --summary-out ./transcripts/mein_summary.txt
+bash ./run.sh "https://..." --summarize --summary-out ./transcripts/mein_summary.md
 bash ./run.sh "https://..." --cookies-from-browser chrome
 bash ./run.sh "https://..." -- --yt-clients "android,tv,web"
 ```
@@ -184,7 +184,7 @@ bash ./run.sh --diagnose
 - Transkripte landen standardmaessig in `transcripts/`.
 - Downloads landen temporaer in `downloads/`.
 - URL-Transkripte werden in `transcripts\video_index.csv` mit Video-ID, Titel, Hash und Datei protokolliert.
-- Bei `-Summarize` entsteht zusaetzlich `<transkript>.summary.txt`.
+- Bei `-Summarize` entsteht zusaetzlich `<transkript>.summary.md`.
 
 ## Direkter Python-Aufruf
 
