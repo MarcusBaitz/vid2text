@@ -358,9 +358,11 @@ INDEX_HTML = r"""<!doctype html>
     }
     .grid {
       display: grid;
-      grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
       gap: 20px;
-      align-items: start;
+    }
+    .app-form {
+      display: grid;
+      gap: 20px;
     }
     .card {
       background: rgba(255, 255, 255, .92);
@@ -372,6 +374,20 @@ INDEX_HTML = r"""<!doctype html>
       padding: 22px;
       display: grid;
       gap: 18px;
+    }
+    .source-card {
+      gap: 20px;
+    }
+    .under-tabs {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+      gap: 20px;
+      align-items: start;
+    }
+    .settings-card {
+      padding: 20px;
+      display: grid;
+      gap: 16px;
       position: sticky;
       top: 18px;
     }
@@ -406,6 +422,44 @@ INDEX_HTML = r"""<!doctype html>
     input[type="url"]:focus, select:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 4px var(--accent-soft);
+    }
+    .source-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      width: min(360px, 100%);
+      padding: 5px;
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      background: var(--surface-soft);
+    }
+    .tab-button {
+      min-height: 42px;
+      border: 0;
+      border-radius: 11px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 14px;
+      font-weight: 850;
+      cursor: pointer;
+      transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+    }
+    .tab-button.active {
+      background: #fff;
+      color: var(--accent);
+      box-shadow: 0 6px 18px rgba(17, 24, 39, .08);
+    }
+    .tab-panels {
+      display: grid;
+      gap: 14px;
+    }
+    .tab-panel {
+      display: grid;
+      gap: 12px;
+    }
+    .tab-panel[hidden] {
+      display: none;
     }
     .source-divider {
       display: grid;
@@ -772,8 +826,8 @@ INDEX_HTML = r"""<!doctype html>
     .hidden { display: none !important; }
     @media (max-width: 860px) {
       main { width: min(100vw - 20px, 1180px); margin: 18px auto 30px; }
-      .grid { grid-template-columns: 1fr; }
-      .input-card { position: static; }
+      .under-tabs { grid-template-columns: 1fr; }
+      .settings-card { position: static; }
       .format-note { text-align: left; }
       .settings-grid { grid-template-columns: 1fr; }
       .reader-head { align-items: flex-start; flex-direction: column; }
@@ -791,116 +845,136 @@ INDEX_HTML = r"""<!doctype html>
       <p class="format-note">Uploads: mp3, m4a, wav, flac, aac, ogg, opus, wma, mp4, mov, mkv, webm, avi</p>
     </header>
     <div class="grid">
-      <form id="jobForm" class="card input-card">
-        <div class="card-title">
-          <h2>Neue Transkription</h2>
-          <p class="hint">Gib entweder einen Link an oder lade eine Datei hoch.</p>
-        </div>
-
-        <label>
-          Video-Link
-          <input id="url" name="url" type="url" placeholder="https://www.youtube.com/watch?v=...">
-          <span class="hint">Funktioniert mit erreichbaren yt-dlp-Quellen wie YouTube, Loom, Vimeo oder direkten Medienlinks.</span>
-        </label>
-
-        <div class="source-divider">oder</div>
-
-        <label class="drop-zone" id="dropZone">
-          <input id="media" name="media" type="file" accept=".mp3,.m4a,.wav,.flac,.aac,.ogg,.opus,.wma,.mp4,.mov,.mkv,.webm,.avi">
-          <span class="drop-inner">
-            <span class="upload-icon">+</span>
-            <span class="file-name" id="fileName">Datei hier ablegen oder auswaehlen</span>
-            <span class="hint">Audio oder Video, lokal auf deinem Rechner.</span>
-          </span>
-        </label>
-
-        <details class="settings">
-          <summary>Erweiterte Einstellungen</summary>
-          <div class="settings-grid">
-            <label>
-              Whisper-Modell
-              <select name="model">
-                <option value="base" selected>base</option>
-                <option value="tiny">tiny</option>
-                <option value="small">small</option>
-                <option value="medium">medium</option>
-                <option value="large">large</option>
-              </select>
-            </label>
-            <label>
-              Geraet
-              <select name="device">
-                <option value="auto" selected>auto</option>
-                <option value="cuda">cuda</option>
-                <option value="cpu">cpu</option>
-              </select>
-            </label>
+      <form id="jobForm" class="app-form">
+        <section class="card input-card source-card">
+          <div class="card-title">
+            <h2>Neue Transkription</h2>
+            <p class="hint">Waehle zuerst die Quelle: Video-Link oder lokale Datei.</p>
           </div>
-        </details>
 
-        <label class="toggle-row">
-          <span class="toggle-text">
-            <strong>Zusammenfassung erzeugen</strong>
-            <span class="hint">Zeigt danach zuerst die gerenderte Markdown-Summary.</span>
-          </span>
-          <span class="switch">
-            <input id="summarize" type="checkbox" name="summarize" value="1">
-            <span class="slider"></span>
-          </span>
-        </label>
-
-        <div class="error" id="error"></div>
-        <button id="submit" class="primary-button" type="submit">Transkription starten</button>
-      </form>
-
-      <div class="workspace">
-        <section class="card status-card">
-          <div class="status-bar">
-            <div class="job-meta">
-              <h2>Status</h2>
-              <div class="hint" id="jobName">Noch kein Job gestartet.</div>
-            </div>
-            <span class="badge" id="status">idle</span>
+          <div class="source-tabs" role="tablist" aria-label="Quelle auswaehlen">
+            <button class="tab-button active" type="button" role="tab" aria-selected="true" data-tab="vidz">Vidz</button>
+            <button class="tab-button" type="button" role="tab" aria-selected="false" data-tab="filz">Filz</button>
           </div>
-          <details class="logs-details" id="logsDetails">
-            <summary>Logs</summary>
-            <pre id="logs"></pre>
-          </details>
-        </section>
 
-        <section class="card result-card">
-          <div class="result-stack" id="resultStack">
-            <div class="empty-state" id="emptyState">
-              <div>
-                <h2>Result</h2>
-                <p class="hint">Summary und Transkript erscheinen hier nach Abschluss.</p>
-              </div>
+          <div class="tab-panels">
+            <div class="tab-panel" role="tabpanel" data-panel="vidz">
+              <label>
+                Video-Link
+                <input id="url" name="url" type="url" placeholder="https://www.youtube.com/watch?v=...">
+                <span class="hint">Funktioniert mit erreichbaren yt-dlp-Quellen wie YouTube, Loom, Vimeo oder direkten Medienlinks.</span>
+              </label>
             </div>
 
-            <article class="reader-block hidden" id="summaryBlock">
-              <div class="reader-head">
-                <h2>Summary</h2>
-                <div class="actions">
-                  <button class="secondary-button" type="button" data-copy="summary">Kopieren</button>
-                  <a class="download-link" id="summaryDownload" href="#">Herunterladen</a>
-                </div>
-              </div>
-              <div class="reader summary" id="summaryReader"></div>
-            </article>
-
-            <details class="transcript-details hidden" id="transcriptDetails">
-              <summary>
-                <h2>Transkript</h2>
-                <span class="actions">
-                  <button class="secondary-button" type="button" data-copy="transcript">Kopieren</button>
-                  <a class="download-link" id="transcriptDownload" href="#">Herunterladen</a>
+            <div class="tab-panel" role="tabpanel" data-panel="filz" hidden>
+              <label class="drop-zone" id="dropZone">
+                <input id="media" name="media" type="file" accept=".mp3,.m4a,.wav,.flac,.aac,.ogg,.opus,.wma,.mp4,.mov,.mkv,.webm,.avi">
+                <span class="drop-inner">
+                  <span class="upload-icon">+</span>
+                  <span class="file-name" id="fileName">Datei hier ablegen oder auswaehlen</span>
+                  <span class="hint">Audio oder Video, lokal auf deinem Rechner.</span>
                 </span>
-              </summary>
-              <div class="reader transcript-text" id="transcriptReader"></div>
-            </details>
+              </label>
+            </div>
           </div>
         </section>
-      </div>
+
+        <div class="under-tabs">
+          <div class="workspace">
+            <section class="card status-card">
+              <div class="status-bar">
+                <div class="job-meta">
+                  <h2>Status</h2>
+                  <div class="hint" id="jobName">Noch kein Job gestartet.</div>
+                </div>
+                <span class="badge" id="status">idle</span>
+              </div>
+              <details class="logs-details" id="logsDetails">
+                <summary>Logs</summary>
+                <pre id="logs"></pre>
+              </details>
+            </section>
+
+            <section class="card result-card">
+              <div class="result-stack" id="resultStack">
+                <div class="empty-state" id="emptyState">
+                  <div>
+                    <h2>Output</h2>
+                    <p class="hint">Summary und Transkript erscheinen hier nach Abschluss.</p>
+                  </div>
+                </div>
+
+                <article class="reader-block hidden" id="summaryBlock">
+                  <div class="reader-head">
+                    <h2>Summary</h2>
+                    <div class="actions">
+                      <button class="secondary-button" type="button" data-copy="summary">Kopieren</button>
+                      <a class="download-link" id="summaryDownload" href="#">Herunterladen</a>
+                    </div>
+                  </div>
+                  <div class="reader summary" id="summaryReader"></div>
+                </article>
+
+                <details class="transcript-details hidden" id="transcriptDetails">
+                  <summary>
+                    <h2>Transkript</h2>
+                    <span class="actions">
+                      <button class="secondary-button" type="button" data-copy="transcript">Kopieren</button>
+                      <a class="download-link" id="transcriptDownload" href="#">Herunterladen</a>
+                    </span>
+                  </summary>
+                  <div class="reader transcript-text" id="transcriptReader"></div>
+                </details>
+              </div>
+            </section>
+          </div>
+
+          <aside class="card settings-card">
+            <div class="card-title">
+              <h2>Einstellungen</h2>
+              <p class="hint">Whisper, Zielgeraet und Summary-Verhalten.</p>
+            </div>
+
+            <details class="settings" open>
+              <summary>Erweiterte Einstellungen</summary>
+              <div class="settings-grid">
+                <label>
+                  Whisper-Modell
+                  <select name="model">
+                    <option value="base" selected>base</option>
+                    <option value="tiny">tiny</option>
+                    <option value="small">small</option>
+                    <option value="medium">medium</option>
+                    <option value="large">large</option>
+                  </select>
+                </label>
+                <label>
+                  Geraet
+                  <select name="device">
+                    <option value="auto" selected>auto</option>
+                    <option value="cuda">cuda</option>
+                    <option value="cpu">cpu</option>
+                  </select>
+                </label>
+              </div>
+            </details>
+
+            <label class="toggle-row">
+              <span class="toggle-text">
+                <strong>Zusammenfassung erzeugen</strong>
+                <span class="hint">Zeigt danach zuerst die gerenderte Markdown-Summary.</span>
+              </span>
+              <span class="switch">
+                <input id="summarize" type="checkbox" name="summarize" value="1" checked>
+                <span class="slider"></span>
+              </span>
+            </label>
+
+            <div class="error" id="error"></div>
+            <button id="submit" class="primary-button" type="submit">Transkription starten</button>
+          </aside>
+        </div>
+      </form>
     </div>
   </main>
   <script>
@@ -911,6 +985,8 @@ INDEX_HTML = r"""<!doctype html>
     const logs = document.querySelector("#logs");
     const logsDetails = document.querySelector("#logsDetails");
     const jobName = document.querySelector("#jobName");
+    const tabButtons = document.querySelectorAll("[data-tab]");
+    const tabPanels = document.querySelectorAll("[data-panel]");
     const dropZone = document.querySelector("#dropZone");
     const fileInput = document.querySelector("#media");
     const fileName = document.querySelector("#fileName");
@@ -932,6 +1008,24 @@ INDEX_HTML = r"""<!doctype html>
       statusBadge.className = "badge " + value;
     }
 
+    function activateTab(tabName, clearInactive = false) {
+      tabButtons.forEach((button) => {
+        const active = button.dataset.tab === tabName;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      tabPanels.forEach((panel) => {
+        panel.hidden = panel.dataset.panel !== tabName;
+      });
+      if (!clearInactive) return;
+      if (tabName === "vidz") {
+        fileInput.value = "";
+        updateFileName(false);
+      } else {
+        urlInput.value = "";
+      }
+    }
+
     function resetResult() {
       currentSummary = "";
       currentTranscript = "";
@@ -945,10 +1039,13 @@ INDEX_HTML = r"""<!doctype html>
       transcriptDownload.removeAttribute("href");
     }
 
-    function updateFileName() {
+    function updateFileName(clearUrl = true) {
       const file = fileInput.files && fileInput.files[0];
       fileName.textContent = file ? file.name : "Datei hier ablegen oder auswaehlen";
-      if (file) urlInput.value = "";
+      if (file) {
+        activateTab("filz", false);
+        if (clearUrl) urlInput.value = "";
+      }
     }
 
     function renderJob(data) {
@@ -1013,11 +1110,20 @@ INDEX_HTML = r"""<!doctype html>
       }, 1200);
     }
 
-    fileInput.addEventListener("change", updateFileName);
+    tabButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        activateTab(button.dataset.tab, true);
+      });
+    });
+
+    fileInput.addEventListener("change", () => updateFileName());
     urlInput.addEventListener("input", () => {
+      if (urlInput.value) {
+        activateTab("vidz", false);
+      }
       if (urlInput.value && fileInput.value) {
         fileInput.value = "";
-        updateFileName();
+        updateFileName(false);
       }
     });
 
