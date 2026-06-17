@@ -3,6 +3,7 @@
 .env
 downloads/
 transcripts/
+uploads/
 tools/
 yt-dlp
 *.webm

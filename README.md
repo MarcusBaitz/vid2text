@@ -4,6 +4,20 @@ Transkribiert lokale Audiodateien oder Video-URLs mit Whisper. Optional wird dan
 
 ## Schnellstart: ein Befehl
 
+UI unter Windows im Projektordner:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start_ui.ps1
+```
+
+Danach ist die Oberflaeche unter `http://127.0.0.1:7860` erreichbar. Sie bietet Datei-Upload, Video-Link-Eingabe, Status-Logs und Ergebnisanzeige.
+
+UI unter Linux im Projektordner:
+
+```bash
+bash ./start_ui.sh
+```
+
 Windows im Projektordner:
 
 ```powershell
