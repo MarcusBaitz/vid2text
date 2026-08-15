@@ -10,3 +10,4 @@ yt-dlp
 __pycache__/
 *.pyc
 .claude/skills/*/.vid2text-home
+dist/

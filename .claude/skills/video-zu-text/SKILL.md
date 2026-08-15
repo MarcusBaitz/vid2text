@@ -1,6 +1,6 @@
 ---
 name: video-zu-text
-description: Wandelt Videos und Audiodateien in Text um - Transkript, Untertitel (SRT/VTT) und optional eine deutsche Zusammenfassung, lokal per Whisper. Nutze diesen Skill immer, wenn es darum geht, gesprochene Inhalte verschriftlichen zu lassen: "transkribiere dieses Video", "was wird in dem YouTube-Link gesagt", "mach Untertitel fuer mein MP4", "SRT-Datei erzeugen", "Text aus Loom/Vimeo/Zoom-Aufzeichnung ziehen", "fasse dieses Video zusammen", "Meeting-Aufnahme verschriftlichen", "Podcast in Text", "Sprachnachricht abtippen" - auch dann, wenn Whisper, Transkript oder Untertitel gar nicht ausdruecklich erwaehnt werden. Greift auf lokale Video-/Audiodateien und auf Video-URLs (YouTube, Loom, Vimeo, X, Direktlinks) zu.
+description: 'Wandelt Videos und Audiodateien in Text um - Transkript, Untertitel (SRT/VTT) und optional eine deutsche Zusammenfassung, lokal per Whisper. Nutze diesen Skill immer, wenn es darum geht, gesprochene Inhalte verschriftlichen zu lassen - "transkribiere dieses Video", "was wird in dem YouTube-Link gesagt", "mach Untertitel fuer mein MP4", "SRT-Datei erzeugen", "Text aus Loom/Vimeo/Zoom-Aufzeichnung ziehen", "fasse dieses Video zusammen", "Meeting-Aufnahme verschriftlichen", "Podcast in Text", "Sprachnachricht abtippen" - auch dann, wenn Whisper, Transkript oder Untertitel gar nicht ausdruecklich erwaehnt werden. Greift auf lokale Video-/Audiodateien und auf Video-URLs (YouTube, Loom, Vimeo, X, Direktlinks) zu.'
 ---
 
 # Video zu Text
