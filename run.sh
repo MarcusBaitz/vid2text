@@ -12,9 +12,11 @@ SUMMARIZE=0
 MODEL="${WHISPER_MODEL:-base}"
 DEVICE="${VID2TEXT_DEVICE:-auto}"
 OUT=""
+OUT_DIR="${VID2TEXT_OUT_DIR:-}"
 SUMMARY_OUT=""
 COOKIES_FROM_BROWSER="${VID2TEXT_COOKIES_FROM_BROWSER:-}"
 COOKIES="${VID2TEXT_COOKIES_FILE:-}"
+SUBTITLES="${VID2TEXT_SUBTITLES:-}"
 DIAGNOSE=0
 SKIP_INSTALL=0
 EXTRA_ARGS=()
@@ -60,9 +62,19 @@ while [[ $# -gt 0 ]]; do
       OUT="$2"
       shift 2
       ;;
+    --out-dir|-OutDir)
+      need_value "$1" "${2:-}"
+      OUT_DIR="$2"
+      shift 2
+      ;;
     --summary-out|-SummaryOut)
       need_value "$1" "${2:-}"
       SUMMARY_OUT="$2"
+      shift 2
+      ;;
+    --subtitles|-Subtitles)
+      need_value "$1" "${2:-}"
+      SUBTITLES="$2"
       shift 2
       ;;
     --cookies-from-browser|-CookiesFromBrowser)
@@ -203,7 +215,9 @@ build_transcribe_args() {
   TRANSCRIBE_ARGS+=(--model "$MODEL" --device "$DEVICE")
   [[ "$SUMMARIZE" -eq 1 ]] && TRANSCRIBE_ARGS+=(--summarize)
   [[ -n "$OUT" ]] && TRANSCRIBE_ARGS+=(--out "$OUT")
+  [[ -n "$OUT_DIR" ]] && TRANSCRIBE_ARGS+=(--out-dir "$OUT_DIR")
   [[ -n "$SUMMARY_OUT" ]] && TRANSCRIBE_ARGS+=(--summary-out "$SUMMARY_OUT")
+  [[ -n "$SUBTITLES" ]] && TRANSCRIBE_ARGS+=(--subtitles "$SUBTITLES")
   [[ -n "$COOKIES_FROM_BROWSER" ]] && TRANSCRIBE_ARGS+=(--cookies-from-browser "$COOKIES_FROM_BROWSER")
   [[ -n "$COOKIES" ]] && TRANSCRIBE_ARGS+=(--cookies "$COOKIES")
   [[ "${#EXTRA_ARGS[@]}" -gt 0 ]] && TRANSCRIBE_ARGS+=("${EXTRA_ARGS[@]}")

@@ -13,7 +13,11 @@ param(
 
     [string]$Out,
 
+    [string]$OutDir = $env:VID2TEXT_OUT_DIR,
+
     [string]$SummaryOut,
+
+    [string]$Subtitles = $env:VID2TEXT_SUBTITLES,
 
     [string]$CookiesFromBrowser = $env:VID2TEXT_COOKIES_FROM_BROWSER,
 
@@ -196,8 +200,14 @@ function Build-TranscribeArgs {
     if ($Out) {
         $args += @("--out", $Out)
     }
+    if ($OutDir) {
+        $args += @("--out-dir", $OutDir)
+    }
     if ($SummaryOut) {
         $args += @("--summary-out", $SummaryOut)
+    }
+    if ($Subtitles) {
+        $args += @("--subtitles", $Subtitles)
     }
     if ($CookiesFromBrowser) {
         $args += @("--cookies-from-browser", $CookiesFromBrowser)

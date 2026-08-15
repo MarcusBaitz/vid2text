@@ -51,6 +51,44 @@ Nach dem ersten Lauf reicht meistens:
 bash ./run.sh "https://www.youtube.com/watch?v=..." --summarize
 ```
 
+## Claude-Code-Skill (global nutzbar)
+
+Im Ordner `.claude/skills/video-zu-text/` liegt ein Skill, mit dem Claude Code
+Videos in Text, Untertitel und Zusammenfassungen umwandelt. Einmal global
+installiert, steht er in jedem Projekt zur Verfuegung:
+
+```bash
+bash ./install-skill.sh
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-skill.ps1
+```
+
+Das legt einen Symlink (bzw. auf Wunsch eine Kopie via `--copy`) unter
+`~/.claude/skills/video-zu-text` an und merkt sich, wo dieses Repository liegt.
+Danach reicht in einer neuen Claude-Code-Sitzung z. B.:
+
+> Erstelle Untertitel fuer https://www.youtube.com/watch?v=...
+
+Der Skill legt seine Ergebnisse im jeweils aktuellen Arbeitsverzeichnis unter
+`transcripts/` ab, nicht in diesem Repository. Deinstallieren:
+`bash ./install-skill.sh --uninstall`.
+
+## Untertitel (SRT/VTT)
+
+```powershell
+.\run.ps1 "https://..." -Subtitles srt,vtt
+```
+
+```bash
+bash ./run.sh "https://..." --subtitles srt,vtt
+```
+
+Die Untertiteldateien entstehen mit Zeitstempeln direkt neben dem Transkript,
+also z. B. `transcripts/titel_id_hash.srt` und `.vtt`. Pro Einblendung entstehen
+hoechstens zwei Zeilen; `--subtitle-max-chars 32` steuert die Zeilenlaenge.
+
 ## Lokale Datei
 
 Windows:
@@ -171,6 +209,8 @@ Hinweise:
 
 - `-Model`: `tiny`, `base`, `small`, `medium`, `large`
 - `-Device`: `auto`, `cuda`, `cpu`
+- `-Subtitles`: `srt`, `vtt` oder `srt,vtt`
+- `-OutDir`: Zielordner mit automatischem Dateinamen, Standard `transcripts`
 - `auto` ist der Standard: nutzt CUDA, wenn verfuegbar, sonst CPU-Fallback.
 - `cuda` erzwingt GPU-Nutzung und bricht ab, wenn keine CUDA-GPU erkannt wird.
 - `cpu` funktioniert ohne GPU, ist aber deutlich langsamer und fuer lange Dateien nicht empfohlen.
@@ -199,6 +239,7 @@ bash ./run.sh --diagnose
 - Downloads landen temporaer in `downloads/`.
 - URL-Transkripte werden in `transcripts\video_index.csv` mit Video-ID, Titel, Hash und Datei protokolliert.
 - Bei `-Summarize` entsteht zusaetzlich `<transkript>.summary.md`.
+- Bei `-Subtitles` entstehen zusaetzlich `<transkript>.srt` und/oder `.vtt`.
 
 ## Direkter Python-Aufruf
 

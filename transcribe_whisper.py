@@ -60,6 +60,28 @@ def parse_args() -> argparse.Namespace:
         help="Output text file path. Default: <audio>.txt next to input.",
     )
     parser.add_argument(
+        "--out-dir",
+        default=os.environ.get("VID2TEXT_OUT_DIR"),
+        help=(
+            "Directory for generated files, keeping the automatic file name. "
+            "Default: ./transcripts. Ignored when --out is given."
+        ),
+    )
+    parser.add_argument(
+        "--subtitles",
+        default=os.environ.get("VID2TEXT_SUBTITLES"),
+        help=(
+            "Comma-separated subtitle formats to write next to the transcript "
+            "(srt, vtt). Example: --subtitles srt,vtt"
+        ),
+    )
+    parser.add_argument(
+        "--subtitle-max-chars",
+        type=int,
+        default=int(os.environ.get("VID2TEXT_SUBTITLE_MAX_CHARS", "42")),
+        help="Maximum characters per subtitle line (default: 42, max two lines per cue).",
+    )
+    parser.add_argument(
         "--summarize",
         action="store_true",
         help="Generate a concrete summary with an LLM after transcription.",
@@ -392,24 +414,28 @@ def download_audio(url: str, cli_args: argparse.Namespace) -> tuple[Path, bool]:
     return audio_path, True
 
 
-def resolve_out_path(audio_path: Path, out_arg: str | None) -> Path:
+def resolve_output_dir(out_dir_arg: str | None) -> Path:
+    out_dir = Path(out_dir_arg).expanduser() if out_dir_arg else Path("transcripts")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
+def resolve_out_path(audio_path: Path, out_arg: str | None, out_dir_arg: str | None) -> Path:
     if out_arg:
         return Path(out_arg)
-    out_dir = Path("transcripts")
-    out_dir.mkdir(exist_ok=True)
-    return out_dir / f"{audio_path.stem}.txt"
+    return resolve_output_dir(out_dir_arg) / f"{audio_path.stem}.txt"
 
 
 def resolve_url_out_path(
     out_arg: str | None,
+    out_dir_arg: str | None,
     video_id: str,
     title_digest: str,
     title: str,
 ) -> Path:
     if out_arg:
         return Path(out_arg)
-    out_dir = Path("transcripts")
-    out_dir.mkdir(exist_ok=True)
+    out_dir = resolve_output_dir(out_dir_arg)
     title_stem = safe_stem(title)[:80].rstrip("._-") or "video"
     return out_dir / f"{title_stem}_{video_id}_{title_digest}.txt"
 
@@ -558,9 +584,120 @@ def get_audio_duration_seconds(audio_path: Path, ffprobe_path: str | None) -> fl
         return None
 
 
+SUBTITLE_FORMATS = ("srt", "vtt")
+
+
+def parse_subtitle_formats(raw_value: str | None) -> list[str]:
+    if not raw_value:
+        return []
+    formats: list[str] = []
+    for chunk in raw_value.replace(";", ",").split(","):
+        name = chunk.strip().lower().lstrip(".")
+        if not name:
+            continue
+        if name not in SUBTITLE_FORMATS:
+            raise SystemExit(
+                f"Unknown subtitle format: {name}. Supported: {', '.join(SUBTITLE_FORMATS)}."
+            )
+        if name not in formats:
+            formats.append(name)
+    return formats
+
+
+def format_timestamp(seconds: float, use_comma: bool) -> str:
+    total_ms = max(0, int(round(seconds * 1000)))
+    hours, remainder = divmod(total_ms, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    secs, millis = divmod(remainder, 1000)
+    separator = "," if use_comma else "."
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}{separator}{millis:03d}"
+
+
+def wrap_subtitle_text(text: str, max_chars: int) -> str:
+    """Split a cue into at most two readable lines.
+
+    Whisper segments are sentence-ish, so a single long line is common. Players
+    render one endless line badly, and two balanced lines are the subtitling
+    convention, so we only break when the text actually exceeds max_chars.
+    """
+    cleaned = " ".join(text.split())
+    if max_chars <= 0 or len(cleaned) <= max_chars:
+        return cleaned
+
+    words = cleaned.split(" ")
+    best_index = None
+    best_distance = None
+    for index in range(1, len(words)):
+        first = " ".join(words[:index])
+        distance = abs(len(first) - len(cleaned) / 2)
+        if len(first) > max_chars:
+            break
+        if best_distance is None or distance < best_distance:
+            best_distance = distance
+            best_index = index
+    if not best_index:
+        return cleaned
+    return " ".join(words[:best_index]) + "\n" + " ".join(words[best_index:])
+
+
+def render_subtitles(segments: list[dict], subtitle_format: str, max_chars: int) -> str:
+    use_comma = subtitle_format == "srt"
+    lines: list[str] = []
+    if subtitle_format == "vtt":
+        lines.append("WEBVTT")
+        lines.append("")
+
+    cue_number = 0
+    previous_end = 0.0
+    for segment in segments:
+        text = wrap_subtitle_text(str(segment.get("text", "")), max_chars)
+        if not text:
+            continue
+        cue_number += 1
+        start = max(float(segment.get("start", 0.0)), previous_end)
+        end = float(segment.get("end", start))
+        if end <= start:
+            end = start + 0.5
+        previous_end = end
+        if subtitle_format == "srt":
+            lines.append(str(cue_number))
+        lines.append(
+            f"{format_timestamp(start, use_comma)} --> {format_timestamp(end, use_comma)}"
+        )
+        lines.append(text)
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def write_subtitle_files(
+    out_path: Path,
+    segments: list[dict],
+    formats: list[str],
+    max_chars: int,
+) -> list[Path]:
+    if not formats:
+        return []
+    if not segments:
+        print("No subtitle segments returned by Whisper; skipping subtitle files.")
+        return []
+
+    written: list[Path] = []
+    for subtitle_format in formats:
+        subtitle_path = out_path.with_suffix(f".{subtitle_format}")
+        subtitle_path.write_text(
+            render_subtitles(segments, subtitle_format, max_chars),
+            encoding="utf-8",
+        )
+        print(f"Subtitles written: {subtitle_path}")
+        written.append(subtitle_path)
+    return written
+
+
 def main() -> None:
     load_dotenv_file()
     args = parse_args()
+    subtitle_formats = parse_subtitle_formats(args.subtitles)
     if args.audio and args.url:
         raise SystemExit("Provide either an audio file path or a URL, not both.")
     if not args.audio and not args.url:
@@ -604,7 +741,9 @@ def main() -> None:
         if downloaded:
             print("Renaming downloaded audio to a safe name...")
             audio_path = ensure_safe_name(audio_path)
-        out_path = resolve_url_out_path(args.out, video_id, video_title_hash, video_title)
+        out_path = resolve_url_out_path(
+            args.out, args.out_dir, video_id, video_title_hash, video_title
+        )
     else:
         print("Input: local file")
         audio_path = Path(args.audio)
@@ -612,7 +751,7 @@ def main() -> None:
             raise SystemExit(f"Audio file not found: {audio_path}")
         summary_title = audio_path.stem
         downloaded = False
-        out_path = resolve_out_path(audio_path, args.out)
+        out_path = resolve_out_path(audio_path, args.out, args.out_dir)
 
     print(f"Output: {out_path}")
 
@@ -641,6 +780,14 @@ def main() -> None:
 
     print("Writing transcript...")
     out_path.write_text(text + "\n", encoding="utf-8")
+
+    if subtitle_formats:
+        write_subtitle_files(
+            out_path,
+            result.get("segments") or [],
+            subtitle_formats,
+            args.subtitle_max_chars,
+        )
 
     if args.summarize:
         if not text:
